@@ -57,4 +57,188 @@
 
     <div class="tabs">
         <button class="tab-btn active" onclick="switchTab('alarms-tab', this)">Alarms</button>
-        <button class="tab-btn" onclick="switchTab('timer-tab
+        <button class="tab-btn" onclick="switchTab('timer-tab', this)">Timer</button>
+    </div>
+
+    <div id="alarms-tab" class="tab-content active">
+        <label for="alarmText">Reminder!</label>
+        <input type="text" id="alarmText" placeholder="eg. check the oven">
+        
+        <label for="alarmTime">At what time?</label>
+        <input type="datetime-local" id="alarmTime">
+        
+        <button class="main-btn" onclick="addAlarm()">Add Voice Alarm</button>
+    </div>
+
+    <div id="timer-tab" class="tab-content">
+        <label for="timerText">Reminder!</label>
+        <input type="text" id="timerText" placeholder="eg. check the oven">
+        
+        <label>Countdown Duration</label>
+        <div class="timer-inputs">
+            <div>
+                <span class="sub-label">Hours</span>
+                <input type="number" id="timerHr" placeholder="0" min="0" value="0">
+            </div>
+            <div>
+                <span class="sub-label">Minutes</span>
+                <input type="number" id="timerMin" placeholder="0" min="0" max="59" value="0">
+            </div>
+            <div>
+                <span class="sub-label">Seconds</span>
+                <input type="number" id="timerSec" placeholder="10" min="0" max="59" value="10">
+            </div>
+        </div>
+        
+        <button class="main-btn" onclick="addCountdown()">Start Countdown</button>
+    </div>
+
+    <div class="list-title">Active Reminders</div>
+    <div id="reminderQueue" class="reminder-list">
+        <div class="empty-state">No reminders set yet</div>
+    </div>
+    
+    <p class="audio-hint">📱 Keep this page open on screen. Ensure your phone is not on Silent Mode.</p>
+</div>
+
+<script>
+    let remindersArr = [];
+    let speechEngineUnlocked = false;
+    
+    // Foreground checking loop
+    setInterval(() => {
+        const now = new Date().getTime();
+        let changed = false;
+
+        remindersArr.forEach((rem, idx) => {
+            if (now >= rem.targetTime) {
+                speakText(rem.message);
+                remindersArr.splice(idx, 1);
+                changed = true;
+            }
+        });
+
+        if (changed) {
+            renderQueue();
+        }
+    }, 1000);
+
+    function unlockSpeechEngine() {
+        if (!speechEngineUnlocked) {
+            const initialSilence = new SpeechSynthesisUtterance("");
+            window.speechSynthesis.speak(initialSilence);
+            speechEngineUnlocked = true;
+        }
+    }
+
+    function speakText(text) {
+        const speech = new SpeechSynthesisUtterance(text);
+        const containsChinese = /[\u4e00-\u9fa5]/.test(text);
+        
+        if (containsChinese) {
+            speech.lang = 'zh-HK';
+            const voices = window.speechSynthesis.getVoices();
+            const hkVoice = voices.find(v => v.lang.includes('zh-HK') || v.lang.includes('zh_HK'));
+            if (hkVoice) speech.voice = hkVoice;
+        } else {
+            speech.lang = 'en-US';
+        }
+        
+        window.speechSynthesis.cancel(); 
+        window.speechSynthesis.speak(speech);
+    }
+
+    if (typeof speechSynthesis !== 'undefined' && speechSynthesis.onvoiceschanged !== undefined) {
+        speechSynthesis.onvoiceschanged = window.speechSynthesis.getVoices;
+    }
+
+    function switchTab(tabId, btnElement) {
+        document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+        document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+        document.getElementById(tabId).classList.add('active');
+        btnElement.classList.add('active');
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+        const now = new Date();
+        now.setMinutes(now.getMinutes() + 5);
+        const localISO = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0,16);
+        document.getElementById('alarmTime').value = localISO;
+        window.speechSynthesis.getVoices();
+    });
+
+    function addAlarm() {
+        unlockSpeechEngine();
+        const text = document.getElementById('alarmText').value.trim() || "Alarm Triggered!";
+        const timeVal = document.getElementById('alarmTime').value;
+
+        if (!timeVal) return alert("Please select a valid time.");
+        const targetTime = new Date(timeVal).getTime();
+        
+        if (targetTime <= new Date().getTime()) return alert("Please choose a time in the future!");
+
+        remindersArr.push({
+            id: Date.now(),
+            message: text,
+            targetTime: targetTime,
+            displayTime: new Date(targetTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
+        });
+
+        document.getElementById('alarmText').value = '';
+        renderQueue();
+    }
+
+    function addCountdown() {
+        unlockSpeechEngine();
+        const text = document.getElementById('timerText').value.trim() || "Timer completed!";
+        const hrs = parseInt(document.getElementById('timerHr').value) || 0;
+        const mins = parseInt(document.getElementById('timerMin').value) || 0;
+        const secs = parseInt(document.getElementById('timerSec').value) || 0;
+
+        const totalMs = ((hrs * 3600) + (mins * 60) + secs) * 1000;
+        if (totalMs <= 0) return alert("Please set a valid duration greater than 0.");
+
+        const targetTime = new Date().getTime() + totalMs;
+
+        let durationLabel = "";
+        if (hrs > 0) durationLabel += `${hrs}h `;
+        if (mins > 0 || hrs > 0) durationLabel += `${mins}m `;
+        durationLabel += `${secs}s`;
+
+        remindersArr.push({
+            id: Date.now(),
+            message: text,
+            targetTime: targetTime,
+            displayTime: `In ${durationLabel}`
+        });
+
+        document.getElementById('timerText').value = '';
+        renderQueue();
+    }
+
+    function removeReminder(id) {
+        remindersArr = remindersArr.filter(item => item.id !== id);
+        renderQueue();
+    }
+
+    function renderQueue() {
+        const container = document.getElementById('reminderQueue');
+        if (remindersArr.length === 0) {
+            container.innerHTML = '<div class="empty-state">No reminders set yet</div>';
+            return;
+        }
+
+        container.innerHTML = remindersArr.map(item => `
+            <div class="reminder-item">
+                <div class="reminder-info">
+                    <span class="reminder-text">${item.message}</span>
+                    <span class="reminder-time">🔔 ${item.displayTime}</span>
+                </div>
+                <button class="delete-btn" onclick="removeReminder(${item.id})">×</button>
+            </div>
+        `).join('');
+    }
+</script>
+
+</body>
+</html>
